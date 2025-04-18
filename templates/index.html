@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Budgee - AI Financial Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Budgee Logo" class="logo">
+                <h1>Budgee demo</h1>
+            </div>
+            <p class="subtitle">AI-Powered Financial Analysis</p>
+        </header>
+
+        <div class="main-content">
+            <div class="input-panel">
+                <div class="prompt-section">
+                    <label for="system-prompt">System Prompt</label>
+                    <textarea id="system-prompt" rows="5"></textarea>
+                    
+                    <label for="user-prompt">User Prompt</label>
+                    <textarea id="user-prompt" placeholder="Describe your transaction or add context for the image..."></textarea>
+                </div>
+                
+                <div class="image-upload-section">
+                    <label for="image-upload">Upload Receipt Image (Optional)</label>
+                    <div class="upload-container">
+                        <div class="upload-controls">
+                            <input type="file" id="image-upload" accept="image/*">
+                            <button id="clear-image-btn" type="button" class="secondary-btn">Delete Image</button>
+                        </div>
+                        <div class="upload-preview" id="image-preview"></div>
+                    </div>
+                </div>
+
+                <div class="audio-upload-section">
+                    <label for="audio-upload">Upload Voice Recording (Optional)</label>
+                    <div class="upload-container">
+                        <div class="upload-controls">
+                            <input type="file" id="audio-upload" accept="audio/*">
+                            <button id="clear-audio-btn" type="button" class="secondary-btn">Delete Audio</button>
+                        </div>
+                        <div class="audio-preview" id="audio-preview"></div>
+                    </div>
+                </div>
+                
+                <div class="action-buttons">
+                    <button id="analyze-btn">Analyze</button>
+                    <button id="clear-history-btn" type="button" class="secondary-btn">Clear Chat History</button>
+                </div>
+            </div>
+            
+            <div class="chat-panel">
+                <div class="chat-header">
+                    <h2>Analysis Results</h2>
+                </div>
+                <div class="messages" id="messages">
+                    <div class="message system">
+                        <p>Welcome to Budgee, your AI financial assistant. Enter details about your transaction or upload a receipt image to analyze your spending.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Templates for dynamic content -->
+    <template id="json-table-template">
+        <div class="json-table-container">
+            <h3 class="table-title">Transaction Details</h3>
+            <table class="json-table">
+                <thead>
+                    <tr>
+                        <th>Property</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Will be filled dynamically -->
+                </tbody>
+            </table>
+        </div>
+    </template>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load default system prompt
+            const defaultSystemPrompt = `
+You are a financial assistant that extracts and records one or more transaction records from user input, which may be in text, image, or voice format.
+
+Your task is to identify the following fields for each transaction:
+- transaction_type: "expense" or "revenue"
+- category: e.g., "food", "shopping", "transportation", etc.
+- date: in YYYY-MM-DD format
+- time: in HH:MM 24-hour format
+- details: short description of the transaction
+- amount: numeric value
+- currency: e.g., "HKD", "USD", "RMB"
+- payment_method: e.g., "Octopus", "Visa", "Alipay", "Cash", etc.
+
+If the input is an image, apply OCR to extract the text.  
+If the input is voice, transcribe it before analysis.
+
+If multiple transactions are found, extract each one as a separate JSON object.
+
+If any field is missing or unclear, can you guess it first if possible. But do not inlcude in the JSON file. Instead, clearly ask the user for clarification in a friendly way.
+
+Always output the extracted data in a JSON array, wrapped in triple backticks, like this:
+
+\`\`\`json
+[
+  {
+    "transaction_type": "",
+    "category": "",
+    "date": "",
+    "time": "",
+    "details": "",
+    "amount": 0,
+    "currency": "",
+    "payment_method": ""
+  },
+  ...
+]
+\`\`\`
+
+and then show output question or clarification outside the JSON array.`;
+            
+            document.getElementById('system-prompt').value = defaultSystemPrompt;
+            
+            // Verify system prompt is properly loaded
+            console.log("System prompt loaded:", document.getElementById('system-prompt').value);
+            
+            // Image preview functionality
+            const imageUpload = document.getElementById('image-upload');
+            const imagePreview = document.getElementById('image-preview');
+            const clearImageBtn = document.getElementById('clear-image-btn');
+            
+            imageUpload.addEventListener('change', function() {
+                imagePreview.innerHTML = '';
+                if (this.files && this.files[0]) {
+                    const img = document.createElement('img');
+                    img.src = URL.createObjectURL(this.files[0]);
+                    img.onload = function() {
+                        URL.revokeObjectURL(this.src);
+                    }
+                    imagePreview.appendChild(img);
+                    clearImageBtn.style.display = 'inline-block';
+                } else {
+                    clearImageBtn.style.display = 'none';
+                }
+            });
+            
+            // Clear image functionality
+            clearImageBtn.addEventListener('click', function() {
+                imageUpload.value = '';
+                imagePreview.innerHTML = '';
+                clearImageBtn.style.display = 'none';
+            });
+            
+            // Initially hide the clear image button if no image
+            clearImageBtn.style.display = 'none';
+            
+            // Audio preview functionality
+            const audioUpload = document.getElementById('audio-upload');
+            const audioPreview = document.getElementById('audio-preview');
+            const clearAudioBtn = document.getElementById('clear-audio-btn');
+            
+            audioUpload.addEventListener('change', function() {
+                audioPreview.innerHTML = '';
+                if (this.files && this.files[0]) {
+                    const audio = document.createElement('audio');
+                    audio.controls = true;
+                    audio.src = URL.createObjectURL(this.files[0]);
+                    audio.onload = function() {
+                        URL.revokeObjectURL(this.src);
+                    }
+                    
+                    // Add file name display
+                    const fileName = document.createElement('p');
+                    fileName.textContent = this.files[0].name;
+                    fileName.className = 'file-name';
+                    
+                    audioPreview.appendChild(fileName);
+                    audioPreview.appendChild(audio);
+                    clearAudioBtn.style.display = 'inline-block';
+                } else {
+                    clearAudioBtn.style.display = 'none';
+                }
+            });
+            
+            // Clear audio functionality
+            clearAudioBtn.addEventListener('click', function() {
+                audioUpload.value = '';
+                audioPreview.innerHTML = '';
+                clearAudioBtn.style.display = 'none';
+            });
+            
+            // Initially hide the clear audio button if no audio
+            clearAudioBtn.style.display = 'none';
+            
+            // Analysis functionality
+            const analyzeBtn = document.getElementById('analyze-btn');
+            const messagesContainer = document.getElementById('messages');
+            
+            analyzeBtn.addEventListener('click', async function() {
+                const systemPrompt = document.getElementById('system-prompt').value;
+                const userPrompt = document.getElementById('user-prompt').value;
+                const imageFile = document.getElementById('image-upload').files[0];
+                const audioFile = document.getElementById('audio-upload').files[0];
+                
+                // Add user message to the chat
+                if (userPrompt) {
+                    addMessage(userPrompt, 'user');
+                } else if (imageFile) {
+                    addMessage('Image uploaded', 'user');
+                } else if (audioFile) {
+                    addMessage('Voice recording uploaded', 'user');
+                }
+                
+                // Create form data
+                const formData = new FormData();
+                formData.append('system_prompt', systemPrompt);
+                formData.append('user_prompt', userPrompt);
+                if (imageFile) {
+                    formData.append('image', imageFile);
+                    console.log("Image attached:", imageFile.name);
+                }
+                if (audioFile) {
+                    formData.append('audio', audioFile);
+                    console.log("Audio attached:", audioFile.name);
+                }
+                
+                // Show loading message
+                const loadingMsgDiv = addMessage('Analyzing your financial data...', 'system');
+                loadingMsgDiv.classList.add('loading-message');
+                analyzeBtn.disabled = true;
+                analyzeBtn.textContent = 'Processing...';
+                
+                try {
+                    const response = await fetch('/analyze', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    // Remove the loading message
+                    messagesContainer.removeChild(loadingMsgDiv);
+                    
+                    if (result.error) {
+                        addMessage(`Error: ${result.error}`, 'error');
+                    } else {
+                        // Process and display the response
+                        processResponse(result.response);
+                    }
+                    
+                    // Clear the user prompt after successful analysis
+                    document.getElementById('user-prompt').value = '';
+                    
+                } catch (error) {
+                    addMessage(`An error occurred: ${error.message}`, 'error');
+                } finally {
+                    analyzeBtn.disabled = false;
+                    analyzeBtn.textContent = 'Analyze';
+                }
+            });
+            
+            // Clear chat history functionality
+            const clearHistoryBtn = document.getElementById('clear-history-btn');
+            
+            clearHistoryBtn.addEventListener('click', async function() {
+                try {
+                    const response = await fetch('/clear_history', {
+                        method: 'POST'
+                    });
+                    
+                    if (response.ok) {
+                        // Clear the chat UI
+                        messagesContainer.innerHTML = '';
+                        addMessage('Chat history cleared. You can start a new conversation.', 'system');
+                    }
+                } catch (error) {
+                    addMessage(`Failed to clear history: ${error.message}`, 'error');
+                }
+            });
+            
+            // Process the AI response - extract JSON and create a user-friendly table
+            function processResponse(text) {
+                console.log("Processing response:", text);
+                let jsonData = null;
+                let jsonText = "";
+                let nonJsonText = "";
+                
+                // Create a message div for the response
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message response';
+                
+                // Try to extract JSON from the response
+                try {
+                    // Look for JSON code blocks in the text
+                    const jsonMatch = text.match(/```json\s+([\s\S]*?)\s+```/);
+                    if (jsonMatch && jsonMatch[1]) {
+                        jsonText = jsonMatch[1].trim();
+                        console.log("Found JSON:", jsonText);
+                        jsonData = JSON.parse(jsonText);
+                        console.log("Parsed JSON data:", jsonData);
+                        
+                        // Extract any text outside the JSON block
+                        nonJsonText = text.replace(/```json\s+[\s\S]*?\s+```/, '').trim();
+                    } else {
+                        // Fallback: Try to parse the entire text as JSON
+                        try {
+                            jsonData = JSON.parse(text);
+                            jsonText = text;
+                            console.log("Parsed entire text as JSON:", jsonData);
+                        } catch (e) {
+                            console.log("Could not parse entire text as JSON:", e);
+                            jsonText = text;
+                            nonJsonText = text;
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error parsing JSON:", e);
+                    jsonText = text;
+                    nonJsonText = text;
+                }
+
+                // Always show the raw JSON/text
+                const preElem = document.createElement('pre');
+                preElem.className = 'response-code';
+                
+                // Format the JSON if we have valid JSON data
+                if (jsonData) {
+                    // Format the JSON with proper indentation
+                    preElem.textContent = typeof jsonText === 'string' ? 
+                        '```json\n' + JSON.stringify(jsonData, null, 2) + '\n```' : 
+                        '```json\n' + JSON.stringify(jsonData, null, 2) + '\n```';
+                } else {
+                    preElem.textContent = jsonText;
+                }
+                
+                messageDiv.appendChild(preElem);
+                
+                // If we have valid JSON data, also create a table
+                if (jsonData) {
+                    console.log("Creating table from JSON data");
+                    
+                    // Ensure jsonData is an array (even if it's a single object)
+                    const transactions = Array.isArray(jsonData) ? jsonData : [jsonData];
+                    console.log("Transactions to display:", transactions.length);
+                    
+                    if (transactions.length > 0) {
+                        // Create table container
+                        const tableContainer = document.createElement('div');
+                        tableContainer.className = 'transaction-table-container';
+                        
+                        // Create table title
+                        const tableTitle = document.createElement('h3');
+                        tableTitle.className = 'table-title';
+                        tableTitle.textContent = transactions.length > 1 ? 
+                            `Transactions (${transactions.length})` : 'Transaction';
+                        tableContainer.appendChild(tableTitle);
+                        
+                        // Create the table
+                        const table = document.createElement('table');
+                        table.className = 'transaction-table';
+                        
+                        // Create table header
+                        const thead = document.createElement('thead');
+                        const headerRow = document.createElement('tr');
+                        
+                        const headers = ['Type', 'Category', 'Date', 'Time', 'Details', 'Amount', 'Currency', 'Payment Method'];
+                        headers.forEach(header => {
+                            const th = document.createElement('th');
+                            th.textContent = header;
+                            headerRow.appendChild(th);
+                        });
+                        
+                        thead.appendChild(headerRow);
+                        table.appendChild(thead);
+                        
+                        // Create table body
+                        const tbody = document.createElement('tbody');
+                        
+                        // Add a row for each transaction
+                        transactions.forEach(transaction => {
+                            const row = document.createElement('tr');
+                            
+                            // Add cells for each property
+                            const addCell = (value) => {
+                                const td = document.createElement('td');
+                                td.textContent = value || '-';
+                                row.appendChild(td);
+                            };
+                            
+                            addCell(transaction.transaction_type);
+                            addCell(transaction.category);
+                            addCell(transaction.date);
+                            addCell(transaction.time);
+                            addCell(transaction.details);
+                            
+                            // Format amount with 2 decimal places if it's a number
+                            const amountCell = document.createElement('td');
+                            if (transaction.amount !== undefined && transaction.amount !== null) {
+                                const amount = parseFloat(transaction.amount);
+                                amountCell.textContent = isNaN(amount) ? transaction.amount : amount.toFixed(2);
+                            } else {
+                                amountCell.textContent = '-';
+                            }
+                            row.appendChild(amountCell);
+                            
+                            addCell(transaction.currency);
+                            addCell(transaction.payment_method);
+                            
+                            tbody.appendChild(row);
+                        });
+                        
+                        table.appendChild(tbody);
+                        tableContainer.appendChild(table);
+                        
+                        // Add the table after the JSON display
+                        messageDiv.appendChild(tableContainer);
+                    }
+                }
+                
+                // Add any non-JSON text after the table if it exists and isn't just whitespace
+                if (nonJsonText && nonJsonText.trim()) {
+                    const aiQuestion = document.createElement('div');
+                    aiQuestion.className = 'ai-question';
+                    aiQuestion.innerHTML = `<p>${nonJsonText.trim()}</p>`;
+                    messageDiv.appendChild(aiQuestion);
+                }
+                
+                // Add the message to the messages container
+                messagesContainer.appendChild(messageDiv);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                return messageDiv;
+            }
+            
+            // Helper function to escape HTML characters
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+            
+            function addMessage(content, type) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${type}`;
+                
+                const p = document.createElement('p');
+                p.textContent = content;
+                messageDiv.appendChild(p);
+                
+                messagesContainer.appendChild(messageDiv);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                
+                return messageDiv;
+            }
+        });
+    </script>
+</body>
+</html> 
