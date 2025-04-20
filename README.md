@@ -17,7 +17,9 @@ A sleek web interface for analyzing financial transactions using Google's Gemini
    pip install -r requirements.txt
    ```
 
-2. Run the Flask application:
+2. Add your api and set your model in the .env file
+   
+3. Run the Flask application:
    ```
    python app.py
    ```
